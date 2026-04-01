@@ -12,20 +12,24 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_current_weather():
     try:
-        # m: 섭씨(metric), 1: 현재 날씨 한 줄만 가져오기
-        # format=%C+%t: 날씨상태와 온도를 가져옴
+        # m: 섭씨, 1: 현재 날씨 한 줄
         response = requests.get("https://wttr.in?format=%C+%t&m", timeout=5)
         if response.status_code == 200:
             weather_data = response.text.strip()
             
-            # 깨질 수 있는 특수문자나 단위를 정제
-            weather_data = weather_data.replace('+', '') # + 기호 제거
+            # 깨지는 기호(°C 등)를 모두 제거하고 숫자만 남기기
+            weather_data = weather_data.replace('+', '')
+            weather_data = weather_data.replace('°C', '도')
+            weather_data = weather_data.replace('°F', '도')
             
-            # 영어 날씨 상태를 한국어로 간단히 매핑 (필요시 추가)
+            # 혹시 모를 다른 특수 기호들 제거
+            weather_data = re.sub(r'[^\w\s가-힣\d]', '', weather_data)
+            
+            # 영어 날씨 상태 한국어 매핑
             weather_map = {
-                "Clear": "맑음", "Sunny": "쾌청", "Partly cloudy": "구름 조금",
-                "Cloudy": "흐림", "Overcast": "매우 흐림", "Mist": "안개",
-                "Patchy rain possible": "가끔 비", "Rain": "비", "Snow": "눈"
+                "Clear": "맑음", "Sunny": "쾌청", "Partly cloudy": "구름조금",
+                "Cloudy": "흐림", "Overcast": "매우흐림", "Mist": "안개",
+                "Patchy rain possible": "가끔비", "Rain": "비", "Snow": "눈"
             }
             
             for eng, kor in weather_map.items():
@@ -33,10 +37,14 @@ def get_current_weather():
                     weather_data = weather_data.replace(eng, kor)
                     break
             
+            # 마지막에 '도'가 안 붙어있다면 숫자 뒤에 붙여주기
+            if not weather_data.endswith('도') and any(char.isdigit() for char in weather_data):
+                weather_data += '도'
+                
             return weather_data
     except Exception:
-        return "맑음 15°C"
-    return "맑음 15°C"
+        return "맑음 15도"
+    return "맑음 15도"
 
 @st.cache_data
 def search_artists(query):
@@ -73,7 +81,7 @@ def get_tracks(collection_id):
         return []
     return []
 
-# --- 이미지 생성 함수 (동일) ---
+# --- 이미지 생성 함수 ---
 
 def wrap_text(text, font, max_width, draw):
     lines = []
@@ -116,7 +124,6 @@ def create_music_card(album_url, title, artist, genre, rating, review, date_str,
     album_size = 520
     album_x = (card_w - album_size) // 2
     
-    # 우측 상단 날짜 및 날씨 배치
     date_weather_text = f"{date_str}  {weather_str}"
     dw_bbox = draw.textbbox((0, 0), date_weather_text, font=font_date)
     dw_w = dw_bbox[2] - dw_bbox[0]
