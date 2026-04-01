@@ -4,10 +4,39 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import urllib3
 import datetime
+import re
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 데이터 가져오기 함수들 ---
+# --- 날씨 및 데이터 가져오기 함수 ---
+
+def get_current_weather():
+    try:
+        # m: 섭씨(metric), 1: 현재 날씨 한 줄만 가져오기
+        # format=%C+%t: 날씨상태와 온도를 가져옴
+        response = requests.get("https://wttr.in?format=%C+%t&m", timeout=5)
+        if response.status_code == 200:
+            weather_data = response.text.strip()
+            
+            # 깨질 수 있는 특수문자나 단위를 정제
+            weather_data = weather_data.replace('+', '') # + 기호 제거
+            
+            # 영어 날씨 상태를 한국어로 간단히 매핑 (필요시 추가)
+            weather_map = {
+                "Clear": "맑음", "Sunny": "쾌청", "Partly cloudy": "구름 조금",
+                "Cloudy": "흐림", "Overcast": "매우 흐림", "Mist": "안개",
+                "Patchy rain possible": "가끔 비", "Rain": "비", "Snow": "눈"
+            }
+            
+            for eng, kor in weather_map.items():
+                if eng in weather_data:
+                    weather_data = weather_data.replace(eng, kor)
+                    break
+            
+            return weather_data
+    except Exception:
+        return "맑음 15°C"
+    return "맑음 15°C"
 
 @st.cache_data
 def search_artists(query):
@@ -44,19 +73,11 @@ def get_tracks(collection_id):
         return []
     return []
 
-def get_current_weather():
-    try:
-        response = requests.get("https://wttr.in?format=%C+%t", timeout=5)
-        if response.status_code == 200:
-            return response.text.strip()
-    except Exception:
-        return "맑음"
-    return "맑음"
-
-# --- 이미지 생성 및 줄바꿈 함수 ---
+# --- 이미지 생성 함수 (동일) ---
 
 def wrap_text(text, font, max_width, draw):
     lines = []
+    if not text: return ""
     for paragraph in text.splitlines():
         current_line = ""
         for char in paragraph:
@@ -95,6 +116,7 @@ def create_music_card(album_url, title, artist, genre, rating, review, date_str,
     album_size = 520
     album_x = (card_w - album_size) // 2
     
+    # 우측 상단 날짜 및 날씨 배치
     date_weather_text = f"{date_str}  {weather_str}"
     dw_bbox = draw.textbbox((0, 0), date_weather_text, font=font_date)
     dw_w = dw_bbox[2] - dw_bbox[0]
@@ -112,6 +134,7 @@ def create_music_card(album_url, title, artist, genre, rating, review, date_str,
     title_bbox = draw.multiline_textbbox((0, 0), wrapped_title, font=font_title, align="center")
     title_w = title_bbox[2] - title_bbox[0]
     draw.multiline_text(((card_w - title_w) // 2, y_pos), wrapped_title, fill="#3E3A39", font=font_title, align="center")
+    
     y_pos += (title_bbox[3] - title_bbox[1]) + 30
     
     artist_line = f"{artist} · #{genre.replace(' ', '_')}"
@@ -119,12 +142,14 @@ def create_music_card(album_url, title, artist, genre, rating, review, date_str,
     artist_bbox = draw.multiline_textbbox((0, 0), wrapped_artist, font=font_artist, align="center")
     artist_w = artist_bbox[2] - artist_bbox[0]
     draw.multiline_text(((card_w - artist_w) // 2, y_pos), wrapped_artist, fill="#8B7355", font=font_artist, align="center")
+    
     y_pos += (artist_bbox[3] - artist_bbox[1]) + 30
     
     stars = "★" * int(rating) + "☆" * (5 - int(rating))
     star_bbox = draw.textbbox((0, 0), stars, font=font_star)
     star_w = star_bbox[2] - star_bbox[0]
     draw.text(((card_w - star_w) // 2, y_pos), stars, fill="#3E3A39", font=font_star)
+    
     y_pos += (star_bbox[3] - star_bbox[1]) + 35
     
     wrapped_review = wrap_text(review, font_review, allowed_width, draw)
@@ -145,8 +170,6 @@ st.markdown("""
     .stTextInput>div>div>input, .stSelectbox>div>div>div {
         background-color: #2A1A12; color: #E8DECC !important; border: 1px solid #5C3D2E; border-radius: 4px;
     }
-    ul[role="listbox"] { background-color: #F9F6F0 !important; }
-    ul[role="listbox"] li, ul[role="listbox"] li span { color: #3B261D !important; }
     .stButton>button, div[data-testid="stDownloadButton"]>button {
         background-color: #5C3D2E !important; color: #E8DECC !important;
         border: 1px solid #2A1A12 !important; border-radius: 8px !important;
@@ -161,14 +184,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("뮤직 프레임 노트")
-st.markdown("음악을 고르고 기록하는 사색의 시간")
 
-# 세션 상태 초기화
 if 'step' not in st.session_state: st.session_state.step = 'artist'
 if 'selected_artist' not in st.session_state: st.session_state.selected_artist = None
 if 'selected_album' not in st.session_state: st.session_state.selected_album = None
 
-# 1단계: 아티스트 검색
 if st.session_state.step == 'artist':
     artist_query = st.text_input("아티스트 이름을 입력해줘.")
     if artist_query:
@@ -182,7 +202,6 @@ if st.session_state.step == 'artist':
         else:
             st.warning("아티스트를 찾지 못했어.")
 
-# 2단계: 앨범 선택 (이미지 기반)
 elif st.session_state.step == 'album':
     st.subheader(f"{st.session_state.selected_artist['artistName']}의 앨범들")
     if st.button("← 다시 검색하기"):
@@ -194,7 +213,6 @@ elif st.session_state.step == 'album':
         cols = st.columns(3)
         for idx, album in enumerate(albums):
             with cols[idx % 3]:
-                # 고해상도 앨범 커버 이미지
                 img_url = album['artworkUrl100'].replace("100x100bb", "300x300bb")
                 st.image(img_url, use_container_width=True)
                 if st.button("선택", key=f"album_{idx}", use_container_width=True):
@@ -202,10 +220,7 @@ elif st.session_state.step == 'album':
                     st.session_state.step = 'track'
                     st.rerun()
                 st.write(f"<p style='font-size:0.8rem; text-align:center;'>{album['collectionName']}</p>", unsafe_allow_html=True)
-    else:
-        st.warning("등록된 앨범이 없어.")
 
-# 3단계: 트랙 선택 및 기록
 elif st.session_state.step == 'track':
     album = st.session_state.selected_album
     st.subheader(f"'{album['collectionName']}' 수록곡")
@@ -219,7 +234,6 @@ elif st.session_state.step == 'track':
         selected_track_name = st.selectbox("기록하고 싶은 곡을 골라줘.", list(track_names.keys()))
         selected_track = track_names[selected_track_name]
         
-        # LP 프리뷰
         lp_url = album['artworkUrl100'].replace("100x100bb", "400x400bb")
         st.markdown(f'<div class="lp-container"><img src="{lp_url}"></div>', unsafe_allow_html=True)
         
@@ -245,9 +259,7 @@ elif st.session_state.step == 'track':
                 weather_str
             )
             
-            st.markdown("<br>인쇄용 카드 미리보기", unsafe_allow_html=True)
             st.image(card, use_container_width=True)
-            
             img_io = io.BytesIO()
             card.save(img_io, format='JPEG', quality=95)
             st.download_button("카드 저장하기", img_io.getvalue(), "music_log.jpg", "image/jpeg", use_container_width=True)
